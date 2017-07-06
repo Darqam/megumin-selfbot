@@ -96,11 +96,10 @@ class DocsCommand extends Command {
         }
 
         if (item.returns) {
-            const descript = item.returns.description ? `${this.clean(item.returns.description)}\n` : '';
-            let type;
-            if (item.returns.types) type = this.joinType(item.returns.types);
-            else type = this.joinType(item.returns);
-            const returns = `${descript}\`=> ${type}\``;
+            const description = item.returns.description ? `${this.clean(item.returns.description)}\n` : '';
+            const type = this.joinType(item.returns.types || item.returns);
+            const returns = `${description}\`=> ${type}\``;
+
             embed.addField('Returns', returns);
         } else {
             embed.addField('Returns', '`=> void`');
