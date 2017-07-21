@@ -34,65 +34,112 @@ class DocsCommand extends Command {
         return json;
     }
 
+    search(docs, query) {
+        query = query.split(/[#.]/);
+        const mainQuery = query[0].toLowerCase();
+        const memberQuery = query[1] ? query[1].toLowerCase() : null;
+
+        const findWithin = (parentItem, props, name) => {
+            let found = null;
+            for (const category of props) {
+                if (!parentItem[category]) continue;
+                const item = parentItem[category].find(i => i.name.toLowerCase() === name);
+                if (item) {
+                    found = { item, category };
+                    break;
+                }
+            }
+
+            return found;
+        };
+
+        const main = findWithin(docs, ['classes', 'interfaces', 'typedefs'], mainQuery);
+        if (!main) return [];
+
+        const res = [main];
+        if (!memberQuery) return res;
+
+        const member = findWithin(main.item, {
+            classes: ['props', 'methods', 'events'],
+            interfaces: ['props', 'methods', 'events'],
+            typedefs: ['props']
+        }[main.category], memberQuery);
+
+        if (!member) return [];
+        const rest = query.slice(2);
+
+        if (rest.length) {
+            const base = this.joinType(member.item.type).replace(/<.+?>/g, '');
+            return this.search(docs, `${base}.${rest.join('.')}`);
+        }
+
+        res.push(member);
+        return res;
+    }
+
     clean(text) {
-        return text.replace(/<\/?(info|warn)>/g, '').replace(/\{@link (.+?)\}/g, '`$1`');
+        return text
+        .replace(/\n/g, ' ')
+        .replace(/<\/?(?:info|warn)>/g, '')
+        .replace(/\{@link (.+?)\}/g, '`$1`');
     }
 
     joinType(type) {
-        return type.map(t => t.map(a => a.join('')).join('')).join(' | ');
+        return type.map(t => t.map(a => Array.isArray(a) ? a.join('') : a).join('')).join(' | ');
     }
 
-    makeLink(mainItem, item, version) {
-        return `https://discord.js.org/#/docs/main/${version}/class/${mainItem.name}?scrollTo=${item.scope === 'static' ? 's-' : ''}${item.name}`;
+    makeLink(main, member, version) {
+        return `https://discord.js.org/#/docs/main/${version}/${main.category === 'classes' ? 'class' : 'typedef'}/${main.item.name}?scrollTo=${member.item.scope === 'static' ? 's-' : ''}${member.item.name}`;
     }
 
-    formatMain(item, version) {
+    formatMain(main, version) {
         const embed = this.client.util.embed();
 
-        let description = `[${item.name}](https://discord.js.org/#/docs/main/${version}/class/${item.name})`;
-        if (item.extends) description += ` (extends ${item.extends[0]})`;
+        let description = `__**[${main.item.name}`;
+        if (main.item.extends) description += ` (extends ${main.item.extends[0]})`;
+        description += `](https://discord.js.org/#/docs/main/${version}/${main.category === 'classes' ? 'class' : 'typedef'}/${main.item.name})**__\n`;
 
-        if (item.description) description += `\n${this.clean(item.description)}`;
+        if (main.item.description) description += `\n${this.clean(main.item.description)}`;
         embed.setDescription(description);
 
         const join = it => `\`${it.map(i => i.name).join('` `')}\``;
 
-        const props = item.props ? join(item.props) : null;
+        const props = main.item.props ? join(main.item.props) : null;
         if (props) embed.addField('Properties', props);
 
-        const methods = item.methods ? join(item.methods) : null;
+        const methods = main.item.methods ? join(main.item.methods) : null;
         if (methods) embed.addField('Methods', methods);
 
-        const events = item.events ? join(item.events) : null;
+        const events = main.item.events ? join(main.item.events) : null;
         if (events) embed.addField('Events', events);
 
         return embed;
     }
 
-    formatProp(item, mainItem, version) {
+    formatProp(main, member, version) {
         const embed = this.client.util.embed();
 
-        let description = `[${mainItem.name}${item.scope === 'static' ? '.' : '#'}${item.name}](${this.makeLink(mainItem, item, version)})`;
+        let description = `__**[${main.item.name}${member.item.scope === 'static' ? '.' : '#'}${member.item.name}](${this.makeLink(main, member, version)})**__\n`;
 
-        if (item.description) description += `\n${this.clean(item.description)}`;
+        if (member.item.description) description += `\n${this.clean(member.item.description)}`;
         embed.setDescription(description);
 
-        const type = this.joinType(item.type);
+        const type = this.joinType(member.item.type);
         embed.addField('Type', `\`${type}\``);
 
         return embed;
     }
 
-    formatMethod(item, mainItem, version) {
+    formatMethod(main, member, version) {
         const embed = this.client.util.embed();
 
-        let description = `[${mainItem.name}${item.scope === 'static' ? '.' : '#'}${item.name}()](${this.makeLink(mainItem, item, version)})`;
+        let description = `__**[${main.item.name}${member.item.scope === 'static' ? '.' : '#'}${member.item.name}()](${this.makeLink(main, member, version)})**__\n`;
 
-        if (item.description) description += `\n${this.clean(item.description)}`;
+        if (member.item.description) description += `\n${this.clean(member.item.description)}`;
         embed.setDescription(description);
 
-        if (item.params) {
-            const params = item.params.map(param => {
+        if (member.item.params) {
+            const params = member.item.params.map(param => {
                 const name = param.optional ? `[${param.name}]` : param.name;
                 const type = this.joinType(param.type);
                 return `\`${name}: ${type}\`\n${this.clean(param.description)}`;
@@ -101,9 +148,9 @@ class DocsCommand extends Command {
             embed.addField('Parameters', params.join('\n\n'));
         }
 
-        if (item.returns) {
-            const desc = item.returns.description ? `${this.clean(item.returns.description)}\n` : '';
-            const type = this.joinType(item.returns.types || item.returns);
+        if (member.item.returns) {
+            const desc = member.item.returns.description ? `${this.clean(member.item.returns.description)}\n` : '';
+            const type = this.joinType(member.item.returns.types || member.item.returns);
             const returns = `${desc}\`=> ${type}\``;
             embed.addField('Returns', returns);
         } else {
@@ -113,16 +160,16 @@ class DocsCommand extends Command {
         return embed;
     }
 
-    formatEvent(item, mainItem, version) {
+    formatEvent(main, member, version) {
         const embed = this.client.util.embed();
 
-        let description = `[${mainItem.name}#${item.name}](${this.makeLink(mainItem, item, version)})`;
+        let description = `__**[${main.item.name}#${member.item.name}](${this.makeLink(main, member, version)})**__\n`;
 
-        if (item.description) description += `\n${this.clean(item.description)}`;
+        if (member.item.description) description += `\n${this.clean(member.item.description)}`;
         embed.setDescription(description);
 
-        if (item.params) {
-            const params = item.params.map(param => {
+        if (member.item.params) {
+            const params = member.item.params.map(param => {
                 const type = this.joinType(param.type);
                 return `\`${param.name}: ${type}\`\n${this.clean(param.description)}`;
             });
@@ -140,24 +187,18 @@ class DocsCommand extends Command {
         }
 
         const docs = await this.fetchDocs(version);
-        const [main, member] = new DocsSearch(docs, query).find();
+        const [main, member] = this.search(docs, query);
 
         if (!main) {
             Logger.error('Could not find entry in docs.');
             return message.delete();
         }
 
-        let embed;
-
-        if (!member) {
-            embed = this.formatMain(main.item, version);
-        } else {
-            embed = {
-                props: this.formatProp,
-                methods: this.formatMethod,
-                events: this.formatEvent
-            }[member.type].call(this, member.item, main.item, version);
-        }
+        const embed = member ? {
+            props: this.formatProp,
+            methods: this.formatMethod,
+            events: this.formatEvent
+        }[member.category].call(this, main, member, version) : this.formatMain(main, version);
 
         const color = this.client.getColor(message);
 
@@ -167,49 +208,6 @@ class DocsCommand extends Command {
         .setAuthor(`Discord.js Docs (${version})`, 'https://cdn.discordapp.com/icons/222078108977594368/bc226f09db83b9176c64d923ff37010b.webp');
 
         return message.edit({ embed });
-    }
-}
-
-class DocsSearch {
-    constructor(docs, query) {
-        this.docs = docs;
-
-        query = query.split(/[#.]/);
-        this.mainQuery = query[0].toLowerCase();
-        this.memberQuery = query[1] ? query[1].toLowerCase() : null;
-    }
-
-    find() {
-        const main = this.findWithin(this.docs, ['classes', 'interfaces', 'typedefs'], this.mainQuery);
-        if (!main) return [];
-
-        const res = [main];
-        if (!this.memberQuery) return res;
-
-        const member = this.findWithin(main.item, {
-            classes: ['props', 'methods', 'events'],
-            interfaces: ['props', 'methods', 'events'],
-            typedefs: ['props']
-        }[main.type], this.memberQuery);
-
-        if (!member) return [];
-        res.push(member);
-        return res;
-    }
-
-    findWithin(parentItem, props, query) {
-        let found = null;
-
-        for (const type of props) {
-            if (!parentItem[type]) continue;
-            const item = parentItem[type].find(i => i.name.toLowerCase() === query);
-            if (item) {
-                found = { item, type };
-                break;
-            }
-        }
-
-        return found;
     }
 }
 
